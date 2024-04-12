@@ -105,13 +105,10 @@ void send_ICMP(struct TrieNode *root, uint32_t router_ipaddr, char *buf,
     ip_hdr->protocol = IPPROTO_ICMP;
     ip_hdr->daddr = ip_hdr->saddr;
     ip_hdr->saddr = router_ipaddr;
-    ip_hdr->check = 0;
     ip_hdr->ttl = ttl;
-    ip_hdr->tot_len = sizeof(struct iphdr) + sizeof(struct icmphdr) +
-                      sizeof(struct iphdr) + 8;
-    ip_hdr->check = htons(checksum(
-        (uint16_t *)ip_hdr, sizeof(struct iphdr) + sizeof(struct icmphdr) +
-                                sizeof(struct iphdr) + 8));
+    ip_hdr->tot_len = 2 * sizeof(struct iphdr) + sizeof(struct icmphdr) + 8;
+    ip_hdr->check = 0;
+    ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, ip_hdr->tot_len));
 
     int destination[32] = {0};
     int2bits(ntohl(ip_hdr->daddr), destination);
@@ -119,9 +116,53 @@ void send_ICMP(struct TrieNode *root, uint32_t router_ipaddr, char *buf,
     struct route_table_entry *pack_source =
         longest_prefix_match(root, destination);
 
-    send_to_link(pack_source->interface, buf,
-                 sizeof(struct ether_header) + 2 * sizeof(struct iphdr) +
-                     sizeof(struct icmphdr) + 8);
+    send_to_link(pack_source->interface, buf, ip_hdr->tot_len);
+
+    // char packet[MAX_PACKET_LEN];
+    // struct icmphdr *icmp_hdr;
+    // char *data;
+
+    // /* Create the headers of the ICMP packet & add the first 64 bits of the
+    //  * original packet's payload */
+    // eth_hdr = (struct ether_header *)packet;
+    // ip_hdr = (struct iphdr *)(packet + sizeof(struct ether_header));
+    // icmp_hdr = (struct icmphdr *)(packet + sizeof(struct ether_header) +
+    //                               sizeof(struct iphdr));
+    // data = packet + sizeof(struct ether_header) + sizeof(struct iphdr) +
+    //        sizeof(struct icmphdr);
+    // memcpy(data, (char *)(buf + sizeof(struct ether_header)), 64);
+
+    // // Initialize Ethernet Header
+    // memcpy(eth_hdr, (char *)buf, sizeof(struct ether_header));
+    // swap(&(eth_hdr->ether_shost), &(eth_hdr->ether_dhost), 6);
+    // eth_hdr->ether_type = htons(0x0800);
+
+    // // Initialize IP Header
+    // memcpy(ip_hdr, (char *)(buf + sizeof(struct ether_header)),
+    //        sizeof(struct iphdr));
+    // ip_hdr->daddr = ip_hdr->saddr;
+    // ip_hdr->saddr = router_ipaddr;
+    // ip_hdr->ttl = 64;
+    // ip_hdr->tot_len = htons(92);
+    // ip_hdr->protocol = IPPROTO_ICMP;
+    // ip_hdr->check = 0;
+    // ip_hdr->check = htons(checksum((uint16_t *)(ip_hdr), sizeof(struct
+    // iphdr)));
+
+    // // Initialize ICMP Header
+    // icmp_hdr->type = type;
+    // icmp_hdr->code = 0;
+    // icmp_hdr->checksum = htons(checksum(
+    //     (uint16_t *)icmp_hdr, ntohs(ip_hdr->tot_len) - sizeof(struct
+    //     iphdr)));
+
+    // // Send the packet
+    // size_t len = 98 + 64;
+    // int destination[32] = {0};
+    // int2bits(ntohl(ip_hdr->daddr), destination);
+    // struct route_table_entry *pack_source =
+    //     longest_prefix_match(root, destination);
+    // send_to_link(pack_source->interface, packet, len);
 }
 
 int main(int argc, char *argv[]) {
