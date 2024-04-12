@@ -97,7 +97,12 @@ void send_ICMP(struct TrieNode *root, uint32_t router_ipaddr, char *buf,
                            sizeof(struct iphdr));
     icmp_hdr->type = type;
     icmp_hdr->code = code;
+    icmp_hdr->checksum = 0;
+    icmp_hdr->checksum =
+        htons(checksum((uint16_t *)icmp_hdr,
+                       sizeof(struct icmphdr) + sizeof(struct iphdr) + 8));
 
+    ip_hdr->protocol = IPPROTO_ICMP;
     ip_hdr->daddr = ip_hdr->saddr;
     ip_hdr->saddr = router_ipaddr;
     ip_hdr->ttl = ttl;
@@ -154,7 +159,7 @@ int main(int argc, char *argv[]) {
         // calculam nr de biti de 1 al mastii
         int mask_ones = 0;
         for (int i = 0; i < 32; ++i) {
-            if (mask_bits[i]) {
+            if (mask_bits[i] == 1) {
                 mask_ones++;
             }
         }
@@ -175,6 +180,8 @@ int main(int argc, char *argv[]) {
         host order. For example, ntohs(eth_hdr->ether_type). The oposite is
        needed when sending a packet on the link, */
 
+        printf("Pachet primit\n");
+
         // facem cast buferului
         struct ether_header *eth_hdr = (struct ether_header *)buf;
 
@@ -189,7 +196,10 @@ int main(int argc, char *argv[]) {
             // 1 verificam daca routerul este destinatia
             if (router_ipaddr == ip_hdr->daddr) {
                 send_ICMP(root, router_ipaddr, buf, 0, 0, 0, ip_hdr, eth_hdr);
+                // send_ICMP_echo_reply(interface, buf, eth_hdr, ip_hdr);
                 continue;
+            } else {
+                printf("Pachetul are alta destinatie\n");
             }
 
             // 2 verificam checksum-ul
@@ -205,6 +215,7 @@ int main(int argc, char *argv[]) {
 
             // cele doua checksum-uri sunt diferite
             if (old_check != new_check) {
+                printf("Pachet corupt\n");
                 continue;
             }
 
@@ -234,7 +245,7 @@ int main(int argc, char *argv[]) {
                 htons(checksum((uint16_t *)ip_hdr, ntohs(ip_hdr->tot_len)));
 
             // daca nu exista
-            if (!entry) {
+            if (entry == NULL) {
                 send_ICMP(root, router_ipaddr, buf, 3, 0, 0, ip_hdr, eth_hdr);
                 continue;
             }
@@ -245,7 +256,7 @@ int main(int argc, char *argv[]) {
 
             // actualizam adresele L2 pe baza urmatorului hop
             for (int i = 0; i < arp_tbl_leng; i++) {
-                if (entry->next_hop == arp_tbl[i].ip) {
+                if (arp_tbl[i].ip == entry->next_hop) {
                     memcpy(eth_hdr->ether_dhost, arp_tbl[i].mac,
                            ether_header_size);
                     break;
