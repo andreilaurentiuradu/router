@@ -85,59 +85,41 @@ struct route_table_entry *longest_prefix_match(struct TrieNode *r,
     return ans;
 }
 
-// TODO
+// trimitere mesaj ICMP
 void send_ICMP(struct TrieNode *root, uint32_t router_ipaddr, char *buf,
-               uint8_t given_type, uint8_t given_code, uint8_t given_ttl,
-               struct iphdr *ip_hdr, struct ether_header *eth_hdr) {
-    char icmp_package[MAX_PACKET_LEN];
-    struct ether_header *ETH_HDR = (struct ether_header *)icmp_package;
-    memcpy(ETH_HDR, eth_hdr, sizeof(struct ether_header));
-    memcpy(ETH_HDR->ether_dhost, eth_hdr->ether_shost, ether_header_size);
-    memcpy(ETH_HDR->ether_shost, eth_hdr->ether_dhost, ether_header_size);
-    // swap(&(eth_hdr->ether_shost), &(eth_hdr->ether_dhost),
-    // ether_header_size);
+               uint8_t type, uint8_t code, uint8_t ttl, struct iphdr *ip_hdr,
+               struct ether_header *eth_hdr) {
+    // actualizam adresele MAC destinatie si sursa
+    swap(&(eth_hdr->ether_shost), &(eth_hdr->ether_dhost), ether_header_size);
 
-    struct iphdr *IP_HDR =
-        (struct iphdr *)(icmp_package + sizeof(struct ether_header));
-    memcpy(IP_HDR, ip_hdr, sizeof(struct iphdr));
-    IP_HDR->protocol = IPPROTO_ICMP;
-    IP_HDR->saddr = router_ipaddr;
-    IP_HDR->daddr = ip_hdr->saddr;
-    IP_HDR->check = 0;
-    IP_HDR->ttl = given_ttl;
-
-    struct icmphdr *ICMP_HDR =
-        (struct icmphdr *)(icmp_package + sizeof(struct ether_header) +
+    struct icmphdr *icmp_hdr =
+        (struct icmphdr *)(buf + sizeof(struct ether_header) +
                            sizeof(struct iphdr));
-    ICMP_HDR->type = given_type;
-    ICMP_HDR->code = given_code;
-    ICMP_HDR->checksum = 0;
-
-    memcpy(icmp_package + sizeof(struct ether_header) + sizeof(struct iphdr) +
-               sizeof(struct icmphdr),
-           ip_hdr, sizeof(struct iphdr));
-    memcpy(icmp_package + sizeof(struct ether_header) + sizeof(struct iphdr) +
-               sizeof(struct icmphdr) + sizeof(struct iphdr),
-           buf + sizeof(struct ether_header) + sizeof(struct iphdr), 8);
-
-    IP_HDR->tot_len = sizeof(struct iphdr) + sizeof(struct icmphdr) +
-                      sizeof(struct iphdr) + 8;
-
-    ICMP_HDR->checksum =
-        htons(checksum((uint16_t *)ICMP_HDR,
+    icmp_hdr->type = type;
+    icmp_hdr->code = code;
+    icmp_hdr->checksum = 0;
+    icmp_hdr->checksum =
+        htons(checksum((uint16_t *)icmp_hdr,
                        sizeof(struct icmphdr) + sizeof(struct iphdr) + 8));
 
-    IP_HDR->check = htons(checksum(
-        (uint16_t *)IP_HDR, sizeof(struct iphdr) + sizeof(struct icmphdr) +
+    ip_hdr->protocol = IPPROTO_ICMP;
+    ip_hdr->daddr = ip_hdr->saddr;
+    ip_hdr->saddr = router_ipaddr;
+    ip_hdr->check = 0;
+    ip_hdr->ttl = ttl;
+    ip_hdr->tot_len = sizeof(struct iphdr) + sizeof(struct icmphdr) +
+                      sizeof(struct iphdr) + 8;
+    ip_hdr->check = htons(checksum(
+        (uint16_t *)ip_hdr, sizeof(struct iphdr) + sizeof(struct icmphdr) +
                                 sizeof(struct iphdr) + 8));
 
-    int Destination[32] = {0};
-    int2bits(ntohl(IP_HDR->daddr), Destination);
+    int destination[32] = {0};
+    int2bits(ntohl(ip_hdr->daddr), destination);
 
     struct route_table_entry *pack_source =
-        longest_prefix_match(root, Destination);
+        longest_prefix_match(root, destination);
 
-    send_to_link(pack_source->interface, icmp_package,
+    send_to_link(pack_source->interface, buf,
                  sizeof(struct ether_header) + 2 * sizeof(struct iphdr) +
                      sizeof(struct icmphdr) + 8);
 }
@@ -162,15 +144,15 @@ int main(int argc, char *argv[]) {
         malloc(sizeof(struct arp_table_entry) * nr_entries);
     int arp_tbl_leng = parse_arp_table("arp_table.txt", arp_tbl);
 
-    // vectorii ce vor contine prefixul si masca transformate in biti
-    int prefix_bits[32] = {0};
-    int mask_bits[32] = {0};
-
     // trie-ul in care se va face cautarea
     struct TrieNode *root = create_node();
 
     // cream trie-ul
     for (int i = 0; i < rtable_len; i++) {
+        // vectorii ce vor contine prefixul si masca transformate in biti
+        int prefix_bits[32] = {0};
+        int mask_bits[32] = {0};
+
         /*
         Datele sunt initial in Network Order
         Facem castul la Host Order
@@ -236,13 +218,14 @@ int main(int argc, char *argv[]) {
             int new_check =
                 htons(checksum((uint16_t *)ip_hdr, ntohs(ip_hdr->tot_len)));
 
+            // cele doua checksum-uri sunt diferite
             if (old_check != new_check) {
                 printf("Pachet corupt\n");
                 continue;
             }
 
             // 3.1 verificare TTL
-            if (ip_hdr->ttl == 1 || ip_hdr->ttl == 0) {
+            if (ip_hdr->ttl == 0 || ip_hdr->ttl == 1) {
                 send_ICMP(root, router_ipaddr, buf, 11, 0, 64, ip_hdr, eth_hdr);
                 continue;
             }
