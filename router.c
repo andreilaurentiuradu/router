@@ -9,6 +9,8 @@
 #include "protocols.h"
 #include "queue.h"
 #define nr_entries 100000
+#define ether_header_size 6
+
 typedef struct TrieNode {
     struct route_table_entry *data;
     struct TrieNode *children[2];
@@ -41,10 +43,12 @@ void insert_node(struct TrieNode *root, int bits[32], int mask_bits,
     current->is_terminal = true;
 }
 // interschimbarea a doua valori
-void swap(int *a, int *b) {
-    int aux = *a;
-    *a = *b;
-    *b = aux;
+void swap(void *a, void *b, size_t size) {
+    void *aux = malloc(size);
+    memcpy(aux, a, size);
+    memcpy(a, b, size);
+    memcpy(b, aux, size);
+    free(aux);
 }
 
 // transformarea unui numar din int intr-un vector de biti
@@ -56,7 +60,7 @@ void int2bits(uint32_t source, int dest[]) {
     } while (source);
 
     for (poz = 0; poz < 16; poz++) {
-        swap(&dest[poz], &dest[31 - poz]);
+        swap(&dest[poz], &dest[31 - poz], sizeof(int));
     }
 }
 
@@ -82,14 +86,14 @@ struct route_table_entry *longest_prefix_match(struct TrieNode *r,
 }
 
 // TODO
-void send_ICMP(struct TrieNode *root, uint8_t given_type, uint8_t given_code,
-               uint8_t given_ttl, char *buf, struct iphdr *ip_hdr,
-               struct ether_header *eth_hdr, int interface) {
+void send_ICMP(struct TrieNode *root, int interface, char *buf,
+               uint8_t given_type, uint8_t given_code, uint8_t given_ttl,
+               struct iphdr *ip_hdr, struct ether_header *eth_hdr) {
     char icmp_package[MAX_PACKET_LEN];
     struct ether_header *ETH_HDR = (struct ether_header *)icmp_package;
     memcpy(ETH_HDR, eth_hdr, sizeof(struct ether_header));
-    memcpy(ETH_HDR->ether_dhost, eth_hdr->ether_shost, 6);
-    memcpy(ETH_HDR->ether_shost, eth_hdr->ether_dhost, 6);
+    memcpy(ETH_HDR->ether_dhost, eth_hdr->ether_shost, ether_header_size);
+    memcpy(ETH_HDR->ether_shost, eth_hdr->ether_dhost, ether_header_size);
 
     struct iphdr *IP_HDR =
         (struct iphdr *)(icmp_package + sizeof(struct ether_header));
@@ -128,9 +132,8 @@ void send_ICMP(struct TrieNode *root, uint8_t given_type, uint8_t given_code,
     int Destination[32] = {0};
     int2bits(ntohl(IP_HDR->daddr), Destination);
 
-    struct route_table_entry *pack_source = NULL;
-
-    pack_source = longest_prefix_match(root, Destination);
+    struct route_table_entry *pack_source =
+        longest_prefix_match(root, Destination);
 
     send_to_link(pack_source->interface, icmp_package,
                  sizeof(struct ether_header) + 2 * sizeof(struct iphdr) +
@@ -204,34 +207,41 @@ int main(int argc, char *argv[]) {
         struct ether_header *eth_hdr = (struct ether_header *)buf;
 
         // verificam daca este un pachet de tip IPv4
-        if (ntohs(eth_hdr->ether_type) == 2048) {
+        if (ntohs(eth_hdr->ether_type) == 0x0800) {
+            // extragem headerul IPv4
             struct iphdr *ip_hdr =
                 (struct iphdr *)(buf + sizeof(struct ether_header));
 
             char *router_ipaddr = get_interface_ip(interface);
 
             // 1 verificam daca routerul este destinatia
-            if (ip_hdr->daddr == inet_addr(router_ipaddr)) {
-                send_ICMP(root, 0, 0, 0, buf, ip_hdr, eth_hdr, interface);
+            if (inet_addr(router_ipaddr) == ip_hdr->daddr) {
+                send_ICMP(root, interface, buf, 0, 0, 0, ip_hdr, eth_hdr);
+                // send_ICMP_echo_reply(interface, buf, eth_hdr, ip_hdr);
                 continue;
             } else {
                 printf("Pachetul are alta destinatie\n");
             }
 
             // 2 verificam checksum-ul
-            int checksum_initial = ip_hdr->check;
+            // pastram checksum-ul vechi
+            int old_check = ip_hdr->check;
+
+            // resetam checksum-ul
             ip_hdr->check = 0;
-            ip_hdr->check =
+
+            // recalculam checksum-ul
+            int new_check =
                 htons(checksum((uint16_t *)ip_hdr, ntohs(ip_hdr->tot_len)));
 
-            if (checksum_initial != ip_hdr->check) {
+            if (old_check != new_check) {
                 printf("Pachet corupt\n");
                 continue;
             }
 
             // 3.1 verificare TTL
             if (ip_hdr->ttl == 1 || ip_hdr->ttl == 0) {
-                send_ICMP(root, 11, 0, 64, buf, ip_hdr, eth_hdr, interface);
+                send_ICMP(root, interface, buf, 11, 0, 64, ip_hdr, eth_hdr);
                 continue;
             }
 
@@ -246,7 +256,7 @@ int main(int argc, char *argv[]) {
             int2bits(ntohl(ip_hdr->daddr), destination);
 
             // gasim intrarea din tabela de routare cu masca cea mai mare
-            struct route_table_entry *package =
+            struct route_table_entry *entry =
                 longest_prefix_match(root, destination);
 
             // 5 actualizare checksum
@@ -254,8 +264,9 @@ int main(int argc, char *argv[]) {
             ip_hdr->check =
                 htons(checksum((uint16_t *)ip_hdr, ntohs(ip_hdr->tot_len)));
 
-            if (package == NULL) {
-                send_ICMP(root, 3, 0, 0, buf, ip_hdr, eth_hdr, interface);
+            // daca nu exista
+            if (entry == NULL) {
+                send_ICMP(root, interface, buf, 3, 0, 0, ip_hdr, eth_hdr);
                 continue;
             }
 
@@ -263,16 +274,17 @@ int main(int argc, char *argv[]) {
             // gasim adresa mac
             get_interface_mac(interface, eth_hdr->ether_shost);
 
-            // actualizam adresele L2
+            // actualizam adresele L2 pe baza urmatorului hop
             for (int i = 0; i < arp_tbl_leng; i++) {
-                if (arp_tbl[i].ip == package->next_hop) {
-                    memcpy(eth_hdr->ether_dhost, arp_tbl[i].mac, 6);
+                if (arp_tbl[i].ip == entry->next_hop) {
+                    memcpy(eth_hdr->ether_dhost, arp_tbl[i].mac,
+                           ether_header_size);
                     break;
                 }
             }
 
             // 7 trimitem pachetul
-            send_to_link(package->interface, buf, len);
+            send_to_link(entry->interface, buf, len);
         }
         // pachetele care nu sunt de tip IPv4 sunt ignorate(TODO pentru ARP)
     }
