@@ -97,12 +97,7 @@ void send_ICMP(struct TrieNode *root, uint32_t router_ipaddr, char *buf,
                            sizeof(struct iphdr));
     icmp_hdr->type = type;
     icmp_hdr->code = code;
-    icmp_hdr->checksum = 0;
-    icmp_hdr->checksum =
-        htons(checksum((uint16_t *)icmp_hdr,
-                       sizeof(struct icmphdr) + sizeof(struct iphdr) + 8));
 
-    ip_hdr->protocol = IPPROTO_ICMP;
     ip_hdr->daddr = ip_hdr->saddr;
     ip_hdr->saddr = router_ipaddr;
     ip_hdr->ttl = ttl;
@@ -117,52 +112,6 @@ void send_ICMP(struct TrieNode *root, uint32_t router_ipaddr, char *buf,
         longest_prefix_match(root, destination);
 
     send_to_link(pack_source->interface, buf, ip_hdr->tot_len);
-
-    // char packet[MAX_PACKET_LEN];
-    // struct icmphdr *icmp_hdr;
-    // char *data;
-
-    // /* Create the headers of the ICMP packet & add the first 64 bits of the
-    //  * original packet's payload */
-    // eth_hdr = (struct ether_header *)packet;
-    // ip_hdr = (struct iphdr *)(packet + sizeof(struct ether_header));
-    // icmp_hdr = (struct icmphdr *)(packet + sizeof(struct ether_header) +
-    //                               sizeof(struct iphdr));
-    // data = packet + sizeof(struct ether_header) + sizeof(struct iphdr) +
-    //        sizeof(struct icmphdr);
-    // memcpy(data, (char *)(buf + sizeof(struct ether_header)), 64);
-
-    // // Initialize Ethernet Header
-    // memcpy(eth_hdr, (char *)buf, sizeof(struct ether_header));
-    // swap(&(eth_hdr->ether_shost), &(eth_hdr->ether_dhost), 6);
-    // eth_hdr->ether_type = htons(0x0800);
-
-    // // Initialize IP Header
-    // memcpy(ip_hdr, (char *)(buf + sizeof(struct ether_header)),
-    //        sizeof(struct iphdr));
-    // ip_hdr->daddr = ip_hdr->saddr;
-    // ip_hdr->saddr = router_ipaddr;
-    // ip_hdr->ttl = 64;
-    // ip_hdr->tot_len = htons(92);
-    // ip_hdr->protocol = IPPROTO_ICMP;
-    // ip_hdr->check = 0;
-    // ip_hdr->check = htons(checksum((uint16_t *)(ip_hdr), sizeof(struct
-    // iphdr)));
-
-    // // Initialize ICMP Header
-    // icmp_hdr->type = type;
-    // icmp_hdr->code = 0;
-    // icmp_hdr->checksum = htons(checksum(
-    //     (uint16_t *)icmp_hdr, ntohs(ip_hdr->tot_len) - sizeof(struct
-    //     iphdr)));
-
-    // // Send the packet
-    // size_t len = 98 + 64;
-    // int destination[32] = {0};
-    // int2bits(ntohl(ip_hdr->daddr), destination);
-    // struct route_table_entry *pack_source =
-    //     longest_prefix_match(root, destination);
-    // send_to_link(pack_source->interface, packet, len);
 }
 
 int main(int argc, char *argv[]) {
@@ -205,7 +154,7 @@ int main(int argc, char *argv[]) {
         // calculam nr de biti de 1 al mastii
         int mask_ones = 0;
         for (int i = 0; i < 32; ++i) {
-            if (mask_bits[i] == 1) {
+            if (mask_bits[i]) {
                 mask_ones++;
             }
         }
@@ -226,8 +175,6 @@ int main(int argc, char *argv[]) {
         host order. For example, ntohs(eth_hdr->ether_type). The oposite is
        needed when sending a packet on the link, */
 
-        printf("Pachet primit\n");
-
         // facem cast buferului
         struct ether_header *eth_hdr = (struct ether_header *)buf;
 
@@ -242,10 +189,7 @@ int main(int argc, char *argv[]) {
             // 1 verificam daca routerul este destinatia
             if (router_ipaddr == ip_hdr->daddr) {
                 send_ICMP(root, router_ipaddr, buf, 0, 0, 0, ip_hdr, eth_hdr);
-                // send_ICMP_echo_reply(interface, buf, eth_hdr, ip_hdr);
                 continue;
-            } else {
-                printf("Pachetul are alta destinatie\n");
             }
 
             // 2 verificam checksum-ul
@@ -261,7 +205,6 @@ int main(int argc, char *argv[]) {
 
             // cele doua checksum-uri sunt diferite
             if (old_check != new_check) {
-                printf("Pachet corupt\n");
                 continue;
             }
 
@@ -291,7 +234,7 @@ int main(int argc, char *argv[]) {
                 htons(checksum((uint16_t *)ip_hdr, ntohs(ip_hdr->tot_len)));
 
             // daca nu exista
-            if (entry == NULL) {
+            if (!entry) {
                 send_ICMP(root, router_ipaddr, buf, 3, 0, 0, ip_hdr, eth_hdr);
                 continue;
             }
@@ -302,7 +245,7 @@ int main(int argc, char *argv[]) {
 
             // actualizam adresele L2 pe baza urmatorului hop
             for (int i = 0; i < arp_tbl_leng; i++) {
-                if (arp_tbl[i].ip == entry->next_hop) {
+                if (entry->next_hop == arp_tbl[i].ip) {
                     memcpy(eth_hdr->ether_dhost, arp_tbl[i].mac,
                            ether_header_size);
                     break;
@@ -312,6 +255,6 @@ int main(int argc, char *argv[]) {
             // 7 trimitem pachetul
             send_to_link(entry->interface, buf, len);
         }
-        // pachetele care nu sunt de tip IPv4 sunt ignorate(TODO pentru ARP)
+        // pachetele care nu sunt de tip IPv4 sunt ignorate
     }
 }
