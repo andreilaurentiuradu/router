@@ -140,8 +140,10 @@ void send_ICMP(struct TrieNode *root, uint8_t given_type, uint8_t given_code,
 int main(int argc, char *argv[]) {
     // initializam bufferul de stdout
     setvbuf(stdout, NULL, _IONBF, 0);
+
     // bufferul
     char buf[MAX_PACKET_LEN];
+
     // Do not modify this line
     init(argc - 2, argv + 2);
 
@@ -155,25 +157,32 @@ int main(int argc, char *argv[]) {
         malloc(sizeof(struct arp_table_entry) * nr_entries);
     int arp_tbl_leng = parse_arp_table("arp_table.txt", arp_tbl);
 
+    // vectorii ce vor contine prefixul si masca transformate in biti
     int prefix_bits[32] = {0};
     int mask_bits[32] = {0};
 
+    // trie-ul in care se va face cautarea
     struct TrieNode *root = create_node();
 
+    // cream trie-ul
     for (int i = 0; i < rtable_len; i++) {
-        int prefix = ntohl(rt_tbl[i].prefix);
-        int mask = ntohl(rt_tbl[i].mask);
+        /*
+        Datele sunt initial in Network Order
+        Facem castul la Host Order
+        Transformam datele din intregi in vectori de biti
+        */
+        int2bits(ntohl(rt_tbl[i].prefix), prefix_bits);
+        int2bits(ntohl(rt_tbl[i].mask), mask_bits);
 
-        int2bits(prefix, prefix_bits);
-        int2bits(mask, mask_bits);
-
+        // calculam nr de biti de 1 al mastii
         int mask_ones = 0;
-        for (int i = 0; i < 32; i++) {
+        for (int i = 0; i < 32; ++i) {
             if (mask_bits[i] == 1) {
                 mask_ones++;
             }
         }
 
+        // adaugam un nodul corespunzator intrarii din tabelul de rutare in trie
         insert_node(root, prefix_bits, mask_ones, &rt_tbl[i]);
     }
 
@@ -201,63 +210,70 @@ int main(int argc, char *argv[]) {
 
             char *router_ipaddr = get_interface_ip(interface);
 
-            // verificam daca routerul este destinatia
-            if (ip_hdr->daddr != inet_addr(router_ipaddr))  //{
+            // 1 verificam daca routerul este destinatia
+            if (ip_hdr->daddr == inet_addr(router_ipaddr)) {
+                send_ICMP(root, 0, 0, 0, buf, ip_hdr, eth_hdr, interface);
+                continue;
+            } else {
                 printf("Pachetul are alta destinatie\n");
-            // } else {
-            //     send_ICMP(root, 0, 0, 0, buf, ip_hdr, eth_hdr,
-            //     interface); continue;
-            // }
+            }
 
-            // verificam checksum-ul
+            // 2 verificam checksum-ul
             int checksum_initial = ip_hdr->check;
             ip_hdr->check = 0;
             ip_hdr->check =
                 htons(checksum((uint16_t *)ip_hdr, ntohs(ip_hdr->tot_len)));
 
             if (checksum_initial != ip_hdr->check) {
-                printf("Corrupted package!\n");
+                printf("Pachet corupt\n");
                 continue;
             }
 
-            // // TTL checking
-            // if (ip_hdr->ttl == 1 || ip_hdr->ttl == 0) {
-            //     send_ICMP(root, 11, 0, 64, buf, ip_hdr, eth_hdr, interface);
-            //     continue;
-            // }
+            // 3.1 verificare TTL
+            if (ip_hdr->ttl == 1 || ip_hdr->ttl == 0) {
+                send_ICMP(root, 11, 0, 64, buf, ip_hdr, eth_hdr, interface);
+                continue;
+            }
 
-            // TTL updating
+            // 3.2 actualizare TTL
             ip_hdr->ttl--;
+
+            // 4 cautam destinatia pachetului
+            // destinatia pachetului
+            int destination[32] = {0};
+
+            // facem conversia adresei din nr intreg in biti
+            int2bits(ntohl(ip_hdr->daddr), destination);
+
+            // gasim intrarea din tabela de routare cu masca cea mai mare
+            struct route_table_entry *package =
+                longest_prefix_match(root, destination);
+
+            // 5 actualizare checksum
             ip_hdr->check = 0;
             ip_hdr->check =
                 htons(checksum((uint16_t *)ip_hdr, ntohs(ip_hdr->tot_len)));
 
-            // Routing table search for package address
+            if (package == NULL) {
+                send_ICMP(root, 3, 0, 0, buf, ip_hdr, eth_hdr, interface);
+                continue;
+            }
 
-            int destination[32] = {0};
-            int2bits(ntohl(ip_hdr->daddr), destination);
-
-            struct route_table_entry *package_entry = NULL;
-
-            package_entry = longest_prefix_match(root, destination);
-
-            // if (package_entry == NULL) {
-            //     send_ICMP(root, 3, 0, 0, buf, ip_hdr, eth_hdr, interface);
-            //     continue;
-            // }
-
-            // Rewriting L2 addresses
+            // 6 rescriere adrese L2
+            // gasim adresa mac
             get_interface_mac(interface, eth_hdr->ether_shost);
 
+            // actualizam adresele L2
             for (int i = 0; i < arp_tbl_leng; i++) {
-                if (arp_tbl[i].ip == package_entry->next_hop) {
+                if (arp_tbl[i].ip == package->next_hop) {
                     memcpy(eth_hdr->ether_dhost, arp_tbl[i].mac, 6);
                     break;
                 }
             }
 
-            // Sending the package
-            send_to_link(package_entry->interface, buf, len);
+            // 7 trimitem pachetul
+            send_to_link(package->interface, buf, len);
         }
+        // pachetele care nu sunt de tip IPv4 sunt ignorate(TODO pentru ARP)
     }
 }
