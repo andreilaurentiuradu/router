@@ -153,7 +153,7 @@ int main(int argc, char *argv[]) {
     // tabela arp statica, luata din fisier
     struct arp_table_entry *arp_tbl =
         malloc(sizeof(struct arp_table_entry) * nr_entries);
-    int arp_table_len = parse_arp_table("arp_table.txt", arp_tbl);
+    int arp_tbl_leng = parse_arp_table("arp_table.txt", arp_tbl);
 
     int prefix_bits[32] = {0};
     int mask_bits[32] = {0};
@@ -249,7 +249,7 @@ int main(int argc, char *argv[]) {
             // Rewriting L2 addresses
             get_interface_mac(interface, eth_hdr->ether_shost);
 
-            for (int i = 0; i < arp_table_len; i++) {
+            for (int i = 0; i < arp_tbl_leng; i++) {
                 if (arp_tbl[i].ip == package_entry->next_hop) {
                     memcpy(eth_hdr->ether_dhost, arp_tbl[i].mac, 6);
                     break;
