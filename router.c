@@ -86,7 +86,7 @@ struct route_table_entry *longest_prefix_match(struct TrieNode *r,
 }
 
 // TODO
-void send_ICMP(struct TrieNode *root, int interface, char *buf,
+void send_ICMP(struct TrieNode *root, uint32_t router_ipaddr, char *buf,
                uint8_t given_type, uint8_t given_code, uint8_t given_ttl,
                struct iphdr *ip_hdr, struct ether_header *eth_hdr) {
     char icmp_package[MAX_PACKET_LEN];
@@ -94,12 +94,14 @@ void send_ICMP(struct TrieNode *root, int interface, char *buf,
     memcpy(ETH_HDR, eth_hdr, sizeof(struct ether_header));
     memcpy(ETH_HDR->ether_dhost, eth_hdr->ether_shost, ether_header_size);
     memcpy(ETH_HDR->ether_shost, eth_hdr->ether_dhost, ether_header_size);
+    // swap(&(eth_hdr->ether_shost), &(eth_hdr->ether_dhost),
+    // ether_header_size);
 
     struct iphdr *IP_HDR =
         (struct iphdr *)(icmp_package + sizeof(struct ether_header));
     memcpy(IP_HDR, ip_hdr, sizeof(struct iphdr));
     IP_HDR->protocol = IPPROTO_ICMP;
-    IP_HDR->saddr = inet_addr(get_interface_ip(interface));
+    IP_HDR->saddr = router_ipaddr;
     IP_HDR->daddr = ip_hdr->saddr;
     IP_HDR->check = 0;
     IP_HDR->ttl = given_ttl;
@@ -212,11 +214,11 @@ int main(int argc, char *argv[]) {
             struct iphdr *ip_hdr =
                 (struct iphdr *)(buf + sizeof(struct ether_header));
 
-            char *router_ipaddr = get_interface_ip(interface);
+            uint32_t router_ipaddr = inet_addr(get_interface_ip(interface));
 
             // 1 verificam daca routerul este destinatia
-            if (inet_addr(router_ipaddr) == ip_hdr->daddr) {
-                send_ICMP(root, interface, buf, 0, 0, 0, ip_hdr, eth_hdr);
+            if (router_ipaddr == ip_hdr->daddr) {
+                send_ICMP(root, router_ipaddr, buf, 0, 0, 0, ip_hdr, eth_hdr);
                 // send_ICMP_echo_reply(interface, buf, eth_hdr, ip_hdr);
                 continue;
             } else {
@@ -241,7 +243,7 @@ int main(int argc, char *argv[]) {
 
             // 3.1 verificare TTL
             if (ip_hdr->ttl == 1 || ip_hdr->ttl == 0) {
-                send_ICMP(root, interface, buf, 11, 0, 64, ip_hdr, eth_hdr);
+                send_ICMP(root, router_ipaddr, buf, 11, 0, 64, ip_hdr, eth_hdr);
                 continue;
             }
 
@@ -266,7 +268,7 @@ int main(int argc, char *argv[]) {
 
             // daca nu exista
             if (entry == NULL) {
-                send_ICMP(root, interface, buf, 3, 0, 0, ip_hdr, eth_hdr);
+                send_ICMP(root, router_ipaddr, buf, 3, 0, 0, ip_hdr, eth_hdr);
                 continue;
             }
 
