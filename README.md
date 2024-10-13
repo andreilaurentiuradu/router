@@ -1,7 +1,3 @@
-# Radu Andrei-Laurentiu - 322CC
-
-# Am rezolvat urmatoarele cerinte:
-
 # Procesul de dirijare
 - initializam bufferul de stdout
 - parsam tabela de rutare si tabela static ARP folosind apiurile existente
